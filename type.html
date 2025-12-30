@@ -1,0 +1,304 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Type</title>
+  <link rel="icon" type="image/png" href="type.png">
+  <style>
+    :root{background:#000;color:#fff}
+    html,body{height:100%;margin:0}
+    body{background:#000;color:#fff;font-family:ui-monospace, SFMono-Regular, Menlo, Monaco, monospace;}
+
+    /* Full-screen terminal area */
+    .screen{
+      height:100vh;
+      box-sizing:border-box;
+      padding:24px 32px;
+      display:flex;
+      flex-direction:column;
+      gap:12px;
+      align-items:flex-start;
+      justify-content:flex-start;
+      overflow:auto;
+      white-space:pre-wrap;
+      font-size:18px;
+      line-height:1.4;
+      caret-color:#fff;
+    }
+
+    /* invisible input that captures typing */
+    #inputCapture{
+      position:fixed;
+      left:-9999px;
+      opacity:0;
+    }
+
+    .status{
+      position:fixed;
+      right:12px;
+      top:12px;
+      font-size:13px;
+      opacity:0.85;
+      user-select:none;
+    }
+
+    .hint{
+      position:fixed;
+      left:12px;
+      bottom:12px;
+      font-size:13px;
+      opacity:0.75;
+    }
+
+    .prompt{color:#9ae6ff}
+    .caret{display:inline-block; width:8px; background:#fff; margin-left:2px; height:1.2em; vertical-align:middle; animation:blink 1s steps(1) infinite}
+    @keyframes blink{50%{opacity:0}}
+
+    .challenge-target{color:#ffd88a}
+    .correct{color:#9fe59f}
+    .error{color:#ff9e9e;text-decoration:underline wavy}
+
+    .controls{display:flex; gap:8px; align-items:center}
+    .button{background:transparent;border:1px solid rgba(255,255,255,0.12);padding:6px 10px;border-radius:8px;font-size:13px;cursor:pointer}
+    .button:hover{opacity:0.9}
+
+    /* small modal for stats */
+    .modal{position:fixed;left:50%;top:50%;transform:translate(-50%,-50%);background:rgba(10,10,10,0.95);border:1px solid rgba(255,255,255,0.06);padding:18px;border-radius:10px}
+  </style>
+</head>
+<body>
+  <div class="screen" id="screen" tabindex="0">
+    <div><span class="prompt">BlackScreenTypingGame — freeplay. Press <b>F1</b> for challenge mode.</span></div>
+    <div id="content">Type here — anything you like.​</div>
+  </div>
+
+  <input id="inputCapture" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false">
+
+  <div class="status" id="status">Mode: Freeplay</div>
+  <div class="hint">Hints: <b>Ctrl+L</b> clear • <b>Ctrl+S</b> save • <b>Esc</b> focus</div>
+
+  <script>
+    // Simple single-file typing 'game' with freeplay + optional challenge mode
+    const screen = document.getElementById('screen')
+    const content = document.getElementById('content')
+    const input = document.getElementById('inputCapture')
+    const status = document.getElementById('status')
+
+    // state
+    let mode = 'freeplay' // or 'challenge'
+    let buffer = localStorage.getItem('bst_buffer') || ''
+    let challenge = null
+
+    // challenge sentences
+    const SENTENCES = [
+      "The quick brown fox jumps over the lazy dog.",
+      "Typing under a black sky feels dramatic and neat.",
+      "Small games teach big ideas.",
+      "Ship fast, learn quickly, and have fun.",
+      "Practice makes progress, not perfection."
+    ]
+
+    // populate buffer
+    content.textContent = buffer || 'Type here — anything you like.\u200B'
+
+    // focus handling
+    function focusInput(){ input.focus() }
+    window.addEventListener('keydown', (e)=>{
+      // global shortcuts
+      if (e.key === 'F1'){
+        e.preventDefault(); toggleMode()
+        return
+      }
+      if ((e.ctrlKey||e.metaKey) && e.key.toLowerCase() === 'l'){
+        e.preventDefault(); clearScreen(); return
+      }
+      if ((e.ctrlKey||e.metaKey) && e.key.toLowerCase() === 's'){
+        e.preventDefault(); saveToFile(); return
+      }
+      if (e.key === 'Escape'){
+        e.preventDefault(); focusInput(); return
+      }
+    })
+
+    screen.addEventListener('click', ()=> focusInput())
+    // capture all typing via the invisible input
+    input.addEventListener('input', (ev)=>{
+      const val = input.value
+      input.value = '' // consume
+      buffer += val
+      content.textContent = buffer
+      scrollBottom()
+      localStorage.setItem('bst_buffer', buffer)
+      if (mode === 'challenge') checkChallengeProgress()
+    })
+
+    // handle special keys (backspace, enter, tab)
+    input.addEventListener('keydown', (ev)=>{
+      if (ev.key === 'Backspace'){
+        ev.preventDefault()
+        if (buffer.length>0) buffer = buffer.slice(0,-1)
+        content.textContent = buffer || ''
+        localStorage.setItem('bst_buffer', buffer)
+        if (mode === 'challenge') checkChallengeProgress()
+      }
+      if (ev.key === 'Enter'){
+        ev.preventDefault()
+        buffer += '\n'
+        content.textContent = buffer
+        localStorage.setItem('bst_buffer', buffer)
+        if (mode === 'challenge') checkChallengeProgress()
+      }
+      if (ev.key === 'Tab'){
+        ev.preventDefault()
+        buffer += '    '
+        content.textContent = buffer
+        localStorage.setItem('bst_buffer', buffer)
+        if (mode === 'challenge') checkChallengeProgress()
+      }
+    })
+
+    // scrolling helper
+    function scrollBottom(){ screen.scrollTop = screen.scrollHeight }
+
+    // clear
+    function clearScreen(){ buffer = ''; content.textContent=''; localStorage.removeItem('bst_buffer') }
+
+    // save to file
+    function saveToFile(){
+      const blob = new Blob([buffer], {type:'text/plain;charset=utf-8'})
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url; a.download = 'blackscreen-typing.txt'
+      document.body.appendChild(a); a.click(); a.remove()
+      URL.revokeObjectURL(url)
+    }
+
+    // toggle mode
+    function toggleMode(){
+      if (mode === 'freeplay') startChallenge()
+      else stopChallenge()
+    }
+
+    function startChallenge(){
+      mode = 'challenge'
+      status.textContent = 'Mode: Challenge — type the yellow sentence exactly. Press F1 to exit.'
+      // pick random sentence and show it
+      const target = SENTENCES[Math.floor(Math.random()*SENTENCES.length)]
+      challenge = {target, typed:''}
+      renderChallenge()
+      // reset buffer to empty so user types fresh
+      buffer = ''
+      content.innerHTML = ''
+      localStorage.setItem('bst_buffer', buffer)
+      focusInput()
+    }
+
+    function stopChallenge(){
+      mode = 'freeplay'
+      challenge = null
+      status.textContent = 'Mode: Freeplay'
+      content.textContent = buffer || ''
+    }
+
+    function renderChallenge(){
+      if (!challenge) return
+      // show instructions + target in a highlighted line
+      const instr = "Type the sentence below. Press Enter when done."
+      const targetLine = document.createElement('div')
+      targetLine.innerHTML = '<div class="challenge-target">'+escapeHtml(challenge.target)+'</div>'
+      const typedLine = document.createElement('div')
+      typedLine.id = 'typedLine'
+      typedLine.innerHTML = renderTypedVsTarget(challenge.typed, challenge.target)
+
+      content.innerHTML = ''
+      const iEl = document.createElement('div')
+      iEl.textContent = instr
+      content.appendChild(iEl)
+      content.appendChild(targetLine)
+      content.appendChild(document.createElement('br'))
+      content.appendChild(typedLine)
+      // caret
+      const caret = document.createElement('span')
+      caret.className = 'caret'
+      typedLine.appendChild(caret)
+      scrollBottom()
+    }
+
+    function renderTypedVsTarget(typed, target){
+      // produce HTML coloring correct/incorrect
+      let out = ''
+      for (let i=0;i<target.length;i++){
+        const ch = target[i]
+        if (i < typed.length){
+          const t = typed[i]
+          if (t === ch) out += '<span class="correct">'+escapeHtml(ch)+'</span>'
+          else out += '<span class="error">'+escapeHtml(ch)+'</span>'
+        } else {
+          out += '<span>'+escapeHtml(ch)+'</span>'
+        }
+      }
+      return out
+    }
+
+    function checkChallengeProgress(){
+      if (!challenge) return
+      // keep typed from buffer (only last line)
+      challenge.typed = buffer.replace(/\n/g,'') // single-line challenge
+      // if typed longer than target, trim
+      if (challenge.typed.length > challenge.target.length) challenge.typed = challenge.typed.slice(0, challenge.target.length)
+      // update display
+      const typedLine = document.getElementById('typedLine')
+      if (typedLine) typedLine.innerHTML = renderTypedVsTarget(challenge.typed, challenge.target)
+      // append caret
+      const caret = document.createElement('span')
+      caret.className = 'caret'
+      typedLine.appendChild(caret)
+
+      // check completion
+      if (challenge.typed === challenge.target){
+        // success
+        setTimeout(()=>{
+          content.innerHTML = ''
+          const done = document.createElement('div')
+          done.innerHTML = '<div class="prompt">Nice! You typed it exactly.</div>'
+          const replay = document.createElement('div')
+          replay.style.marginTop = '12px'
+          replay.innerHTML = '<button class="button" onclick="replayChallenge()">Next</button> <button class="button" onclick="stopChallenge()">Exit</button>'
+          content.appendChild(done)
+          content.appendChild(replay)
+        },120)
+      }
+    }
+
+    // helper functions
+    function escapeHtml(s){ return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;') }
+
+    function replayChallenge(){ startChallenge() }
+
+    // initial focus
+    focusInput()
+
+    // expose some functions for buttons (used inside strings)
+    window.replayChallenge = replayChallenge
+    window.stopChallenge = stopChallenge
+
+    // small accessibility: paste support
+    window.addEventListener('paste', (e)=>{
+      const txt = (e.clipboardData || window.clipboardData).getData('text')
+      if (!txt) return
+      buffer += txt
+      content.textContent = buffer
+      localStorage.setItem('bst_buffer', buffer)
+      if (mode === 'challenge') checkChallengeProgress()
+      e.preventDefault()
+    })
+
+    // gentle hint when loaded
+    setTimeout(()=>{
+      const p = document.querySelector('.prompt')
+      if (p) p.textContent = 'BlackScreenTypingGame — Freeplay. Press F1 for challenge mode.'
+    },300)
+  </script>
+</body>
+</html>
